@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Procsy</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: #111517; color: #f0f2ef; font: 14px "Segoe UI", sans-serif; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; background: #1a2023; border-bottom: 1px solid #394144; }
+    button, input { min-height: 40px; border: 1px solid #394144; border-radius: 7px; color: inherit; font: inherit; }
+    button { padding: 0 14px; background: #242c30; cursor: pointer; }
+    button:hover { border-color: #b31b1b; }
+    button:disabled { opacity: .5; cursor: wait; }
+    form { display: flex; flex: 1 1 300px; gap: 8px; }
+    input { min-width: 0; flex: 1; padding: 0 12px; background: #111517; }
+    .go { background: #b31b1b; border-color: #b31b1b; font-weight: 700; }
+    .status { margin: 0; padding: 10px 12px; color: #a8b1b4; }
+    iframe { flex: 1; width: 100%; min-height: 450px; border: 0; background: #fff; }
+    iframe[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button id="back" type="button" aria-label="Back" disabled>&larr;</button>
+    <button id="forward" type="button" aria-label="Forward" disabled>&rarr;</button>
+    <button id="reload" type="button" aria-label="Reload" disabled>&#8635;</button>
+    <form id="addressForm">
+      <input id="address" type="text" placeholder="Search or enter a web address" aria-label="Search or enter a web address" autocomplete="off" required>
+      <button class="go" type="submit" disabled>Go</button>
+    </form>
+  </div>
+  <p class="status" id="status" role="status" aria-live="polite">Starting Procsy...</p>
+  <iframe id="browser" title="Proxied web page" hidden></iframe>
+  <script src="/baremux/index.js"></script>
+  <script src="/uv/uv.bundle.js"></script>
+  <script src="/uv/uv.config.js"></script>
+  <script>
+    (async function () {
+      const status = document.getElementById('status');
+      const input = document.getElementById('address');
+      const browser = document.getElementById('browser');
+      const controls = document.querySelectorAll('button');
+      try {
+        if (!navigator.serviceWorker) throw new Error('A secure HTTPS connection or localhost is required.');
+        if (typeof BareMux === 'undefined' || typeof __uv$config === 'undefined') throw new Error('Ultraviolet could not be loaded from the server.');
+        const registration = await navigator.serviceWorker.register('/uv/sw.js');
+        const worker = registration.active || registration.installing || registration.waiting;
+        if (!worker) throw new Error('The service worker did not start.');
+        if (worker.state !== 'activated') {
+          await new Promise(function (resolve, reject) {
+            worker.addEventListener('statechange', function () {
+              if (worker.state === 'activated') resolve();
+              else if (worker.state === 'redundant') reject(new Error('The service worker could not be activated.'));
+            });
+          });
+        }
+        const connection = new BareMux.BareMuxConnection('/baremux/worker.js');
+        const wisp = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/wisp/';
+        await connection.setTransport('/epoxy/index.mjs', [{ wisp: wisp }]);
+        controls.forEach(function (button) { button.disabled = false; });
+        status.textContent = 'Enter a web address or search term to get started.';
+        document.getElementById('addressForm').addEventListener('submit', function (event) {
+          event.preventDefault();
+          const value = input.value.trim();
+          if (!value) return;
+          let url;
+          if (/^https?:\/\//i.test(value)) url = value;
+          else if (/^(localhost|(?:[a-z0-9-]+\.)+[a-z]{2,})(:\d+)?(?:[/?#]|$)/i.test(value)) url = 'https://' + value;
+          else url = 'https://www.google.com/search?q=' + encodeURIComponent(value);
+          try {
+            browser.src = __uv$config.prefix + __uv$config.encodeUrl(url);
+            input.value = url;
+            browser.hidden = false;
+            status.textContent = '';
+          } catch (error) {
+            status.textContent = 'Could not open that address: ' + error.message;
+          }
+        });
+        document.getElementById('back').addEventListener('click', function () { browser.contentWindow.history.back(); });
+        document.getElementById('forward').addEventListener('click', function () { browser.contentWindow.history.forward(); });
+        document.getElementById('reload').addEventListener('click', function () { browser.contentWindow.location.reload(); });
+      } catch (error) {
+        console.error('Procsy failed to start:', error);
+        status.textContent = 'Procsy could not start: ' + error.message;
+      }
+    })();
+  </script>
+</body>
+</html>
